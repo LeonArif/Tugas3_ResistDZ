@@ -1,4 +1,4 @@
-from database import Base
+from ..database import Base
 from sqlalchemy import Column, Integer, String, DateTime
 from sqlalchemy.sql import func
 
@@ -8,6 +8,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     password_salt = Column(String, nullable=False)
+    # ECDH keys for key exchange
     public_key = Column(String, nullable=False)
     private_key_encrypted = Column(String, nullable=False)
     kdf_salt = Column(String, nullable=False)

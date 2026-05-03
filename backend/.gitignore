@@ -1,0 +1,5 @@
+chat.db
+src/crypto/_server_jwt_private.pem
+src/crypto/_server_jwt_public.pem
+__pycache__/
+*.pyc

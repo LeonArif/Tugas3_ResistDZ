@@ -6,7 +6,6 @@ import os
 
 DEFAULT_ITERATIONS = 200_000
 
-
 def _b64_encode(raw: bytes) -> str:
 	return base64.b64encode(raw).decode("utf-8")
 
@@ -19,7 +18,7 @@ def generate_salt(length: int = 16) -> str:
 	return _b64_encode(os.urandom(length))
 
 
-def hash_password(password: str, salt_b64: str | None = None, iterations: int = DEFAULT_ITERATIONS) -> dict:
+def hash_str(password: str, salt_b64: str | None = None, iterations: int = DEFAULT_ITERATIONS) -> dict:
 	if salt_b64 is None:
 		salt_b64 = generate_salt()
 
@@ -32,7 +31,7 @@ def hash_password(password: str, salt_b64: str | None = None, iterations: int = 
 	}
 
 
-def verify_password(password: str, salt_b64: str, expected_hash_b64: str, iterations: int = DEFAULT_ITERATIONS) -> bool:
+def verify_hash(password: str, salt_b64: str, expected_hash_b64: str, iterations: int = DEFAULT_ITERATIONS) -> bool:
 	salt = _b64_decode(salt_b64)
 	expected = _b64_decode(expected_hash_b64)
 	candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
