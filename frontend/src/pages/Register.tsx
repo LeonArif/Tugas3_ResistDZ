@@ -1,6 +1,7 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react'
 import Footer from '../components/Footer'
 import Navbar from '../components/Navbar'
+import { useRegistration } from '../utils/useChat'
 
 type RegisterForm = {
   username: string
@@ -29,6 +30,7 @@ const Register = () => {
     message: string
   }>({ kind: 'idle', message: '' })
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const registration = useRegistration()
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target
@@ -51,6 +53,10 @@ const Register = () => {
     setStatus({ kind: 'idle', message: '' })
 
     try {
+      // Generate ECDH keypair
+      const { privateKey, publicKeyB64 } = await registration.generateKeypair()
+
+      // Send ke backend dengan public key
       const response = await fetch('/api/register', {
         method: 'POST',
         headers: {
@@ -60,6 +66,7 @@ const Register = () => {
           username: form.username.trim(),
           email: form.email.trim(),
           password: form.password,
+          public_key: publicKeyB64,
         }),
       })
 
@@ -75,11 +82,20 @@ const Register = () => {
 
       const successData = data as RegisterResponse
 
+      // Save private key ke localStorage dengan enkripsi with password
+      await registration.savePrivateKey(privateKey, form.password, form.email.trim())
       setStatus({
         kind: 'success',
-        message: `${successData.message} Akun ${successData.username} (${successData.email}) berhasil dibuat.`,
+        message: `${successData.message} Akun ${successData.username} (${successData.email}) berhasil dibuat. Private key tersimpan aman.`,
       })
+      
+      registration.clearTemp()
       setForm(initialForm)
+
+      // Redirect ke login setelah delay
+      window.setTimeout(() => {
+        window.location.href = '/login'
+      }, 1500)
     } catch (error) {
       setStatus({
         kind: 'error',

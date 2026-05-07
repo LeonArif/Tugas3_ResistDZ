@@ -9,11 +9,16 @@ function App() {
     return <Login />
   }
 
+  if (pathname === '/register') {
+    return <Register />
+  }
+
   if (pathname === '/chat') {
     return <Chat />
   }
 
-  return <Register />
+  window.location.replace('/login')
+  return null
 }
 
 export default App

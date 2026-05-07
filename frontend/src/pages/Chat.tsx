@@ -1,143 +1,325 @@
+import { useState, useEffect, useRef, useCallback, type ChangeEvent, type FormEvent } from 'react'
 import Footer from '../components/Footer'
 import Navbar from '../components/Navbar'
+import { useChatSession } from '../utils/useChat'
+import { getContacts } from '../utils/api'
 
-const contacts = [
-  { name: 'arga@crypto.chat', status: 'online' },
-  { name: 'diero@crypto.chat', status: 'typing' },
-  { name: 'resistdz@crypto.chat', status: 'idle' },
-]
+type ChatMessage = {
+  sender_email: string
+  receiver_email: string
+  plaintext: string
+  ciphertext: string
+  iv: string
+  timestamp: string
+  decryptionFailed?: boolean
+}
 
-const messages = [
-  {
-    sender: 'arga@crypto.chat',
-    body: 'Kalau login sudah selesai, nanti token JWT dipakai untuk akses chat.',
-    time: '09:12',
-  },
-  {
-    sender: 'you',
-    body: 'Setelah itu baru key exchange ECDH dan AES untuk pesan ya.',
-    time: '09:13',
-  },
-  {
-    sender: 'arga@crypto.chat',
-    body: 'Betul. Sekarang halaman ini masih desain placeholder dulu.',
-    time: '09:14',
-  },
-]
+const POLLING_INTERVAL_MS = 3000
 
 const Chat = () => {
-  const username = window.localStorage.getItem('authUsername') ?? 'guest'
-  const email = window.localStorage.getItem('authEmail') ?? 'belum-login@local'
-  const token = window.localStorage.getItem('authToken')
+  const token = window.localStorage.getItem('authToken') ?? ''
+  const myEmail = window.localStorage.getItem('authEmail') ?? ''
+  const myUsername = window.localStorage.getItem('authUsername') ?? ''
+  const myPassword = window.localStorage.getItem('authPassword') ?? ''
+
+  const [contacts, setContacts] = useState<{ email: string; username: string }[]>([])
+  // Menggunakan '' bukan null agar hook bisa dipanggil unconditionally
+  const [selectedContactEmail, setSelectedContactEmail] = useState<string>('')
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messageInput, setMessageInput] = useState('')
+  const [status, setStatus] = useState<{
+    kind: 'idle' | 'loading' | 'success' | 'error'
+    message: string
+  }>({ kind: 'idle', message: '' })
+  const [isInitializingChat, setIsInitializingChat] = useState(false)
+  const [isSendingMessage, setIsSendingMessage] = useState(false)
+  const [sessionReady, setSessionReady] = useState(false)
+
+  const chatSession = useChatSession(selectedContactEmail, token, myEmail)
+
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
+
+  // Load daftar kontak
+  useEffect(() => {
+    if (!token) {
+      window.location.href = '/login'
+      return
+    }
+
+    const loadContacts = async () => {
+      try {
+        setStatus({ kind: 'loading', message: 'Memuat daftar kontak...' })
+        const data = await getContacts(token)
+        setContacts(data)
+        setStatus({ kind: 'idle', message: '' })
+      } catch (error) {
+        setStatus({
+          kind: 'error',
+          message: error instanceof Error ? error.message : 'Gagal memuat kontak',
+        })
+      }
+    }
+
+    loadContacts()
+  }, [token])
+
+  // Polling otomatis untuk menerima pesan baru dari contact
+  const startPolling = useCallback((contactEmail: string) => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+    }
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        const latestMessages = await chatSession.loadMessageHistory(contactEmail)
+        setMessages(latestMessages)
+      } catch {
+      }
+    }, POLLING_INTERVAL_MS)
+  }, [chatSession])
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+      pollingRef.current = null
+    }
+  }, [])
+
+  // Hentikan polling saat component unmount
+  useEffect(() => {
+    return () => stopPolling()
+  }, [stopPolling])
+
+  const handleSelectContact = async (contactEmail: string) => {
+    if (!contactEmail) return
+
+    stopPolling()
+    setSelectedContactEmail(contactEmail)
+    setMessages([])
+    setSessionReady(false)
+    setMessageInput('')
+
+    try {
+      setIsInitializingChat(true)
+      setStatus({ kind: 'loading', message: 'Memulai session chat...' })
+
+      if (!myPassword) {
+        throw new Error('Password tidak ditemukan, silakan login ulang')
+      }
+
+      await chatSession.initializeSession(myPassword, contactEmail)
+      setStatus({ kind: 'success', message: 'Session chat berhasil dibuat' })
+      setSessionReady(true)
+
+      const messageHistory = await chatSession.loadMessageHistory(contactEmail)
+      setMessages(messageHistory)
+
+      // Mulai polling 
+      startPolling(contactEmail)
+    } catch (error) {
+      setStatus({
+        kind: 'error',
+        message: error instanceof Error ? error.message : 'Gagal initialize chat',
+      })
+      setSessionReady(false)
+      setSelectedContactEmail('')
+    } finally {
+      setIsInitializingChat(false)
+    }
+  }
+
+  const handleSendMessage = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (!messageInput.trim() || !sessionReady) return
+
+    try {
+      setIsSendingMessage(true)
+      setStatus({ kind: 'loading', message: 'Mengirim pesan...' })
+
+      const newMessage = await chatSession.sendEncryptedMessage(messageInput.trim())
+      setMessages((prev) => [...prev, newMessage])
+      setMessageInput('')
+
+      setStatus({ kind: 'success', message: 'Pesan terkirim' })
+      setTimeout(() => setStatus({ kind: 'idle', message: '' }), 2000)
+    } catch (error) {
+      setStatus({
+        kind: 'error',
+        message: error instanceof Error ? error.message : 'Gagal mengirim pesan',
+      })
+    } finally {
+      setIsSendingMessage(false)
+    }
+  }
+
+  const handleLogout = () => {
+    stopPolling()
+    window.localStorage.removeItem('authToken')
+    window.localStorage.removeItem('authEmail')
+    window.localStorage.removeItem('authUsername')
+    window.localStorage.removeItem('authPassword')
+    window.location.href = '/login'
+  }
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.95),rgba(243,244,246,0.88)_35%,rgba(233,236,255,0.95)_100%)] text-slate-900">
       <Navbar />
 
-      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
-        <section className="grid gap-6 lg:grid-cols-[0.78fr_1.22fr]">
-          <aside className="rounded-4xl border border-slate-200 bg-white/85 p-6 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.35)] backdrop-blur-xl sm:p-8">
-            <p className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-4 py-1 text-xs font-semibold uppercase tracking-[0.28em] text-violet-700">
-              Chat dashboard
-            </p>
-            <h2 className="mt-5 text-3xl font-semibold tracking-tight text-slate-950">
-              Ruang chat terenkripsi
-            </h2>
-            <p className="mt-3 text-sm leading-7 text-slate-600">
-              Halaman ini masih desain placeholder. Nanti token JWT dari login akan dipakai
-              untuk buka kontak, melakukan ECDH, dan kirim pesan AES.
-            </p>
+      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        {status.kind !== 'idle' && (
+          <div
+            className={`rounded-2xl border px-4 py-3 ${
+              status.kind === 'error'
+                ? 'border-red-200 bg-red-50 text-red-700'
+                : status.kind === 'success'
+                  ? 'border-green-200 bg-green-50 text-green-700'
+                  : 'border-blue-200 bg-blue-50 text-blue-700'
+            }`}
+          >
+            {status.message}
+          </div>
+        )}
 
-            <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
-              <p className="font-semibold text-slate-800">Session info</p>
-              <p className="mt-2">User: {username}</p>
-              <p>Email: {email}</p>
-              <p className="mt-2 break-all text-xs text-slate-500">
-                JWT: {token ? `${token.slice(0, 26)}...` : 'belum ada token'}
-              </p>
+        <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
+          <aside className="rounded-3xl border border-slate-200 bg-white/85 p-6 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.35)] backdrop-blur-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-950">Kontak</h3>
+              <button
+                onClick={handleLogout}
+                className="rounded-lg bg-red-100 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-200"
+              >
+                Logout
+              </button>
             </div>
 
-            <div className="mt-6 space-y-3">
-              {contacts.map((contact) => (
-                <button
-                  key={contact.name}
-                  type="button"
-                  className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-                >
-                  <span>
-                    <span className="block font-medium text-slate-900">{contact.name}</span>
-                    <span className="text-xs text-slate-500">kontak demo</span>
-                  </span>
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                    {contact.status}
-                  </span>
-                </button>
-              ))}
+            <p className="mb-4 text-sm text-slate-500">
+              Halo, <strong>{myUsername}</strong> ({myEmail})
+            </p>
+
+            <div className="space-y-2">
+              {contacts.length === 0 ? (
+                <p className="text-sm text-slate-400">Belum ada kontak lain</p>
+              ) : (
+                contacts.map((contact) => (
+                  <button
+                    key={contact.email}
+                    onClick={() => handleSelectContact(contact.email)}
+                    className={`w-full rounded-xl border px-3 py-3 text-left text-sm transition ${
+                      selectedContactEmail === contact.email
+                        ? 'border-violet-400 bg-violet-50 font-medium text-violet-900'
+                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100'
+                    }`}
+                    disabled={isInitializingChat}
+                  >
+                    <div className="font-medium">{contact.username}</div>
+                    <div className="text-xs opacity-75">{contact.email}</div>
+                  </button>
+                ))
+              )}
             </div>
           </aside>
 
-          <section className="flex min-h-170 flex-col rounded-4xl border border-slate-200 bg-white/85 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.35)] backdrop-blur-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5 sm:px-8">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-700">
-                  Conversation preview
-                </p>
-                <h3 className="mt-1 text-2xl font-semibold text-slate-950">
-                  arga@crypto.chat
-                </h3>
-              </div>
-              <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-                ECDH + AES ready later
-              </div>
-            </div>
-
-            <div className="flex-1 space-y-4 px-6 py-6 sm:px-8">
-              {messages.map((message) => {
-                const isMe = message.sender === 'you'
-
-                return (
-                  <div key={`${message.sender}-${message.time}`} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                    <article
-                      className={`max-w-[78%] rounded-3xl px-4 py-3 shadow-sm ${
-                        isMe ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-900'
-                      }`}
-                    >
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] opacity-70">
-                        {message.sender}
-                      </p>
-                      <p className="mt-2 leading-7">{message.body}</p>
-                      <p className={`mt-2 text-xs ${isMe ? 'text-slate-300' : 'text-slate-500'}`}>
-                        {message.time}
-                      </p>
-                    </article>
-                  </div>
-                )
-              })}
-            </div>
-
-            <div className="border-t border-slate-200 p-4 sm:p-6">
-              <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50/80 p-4">
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <input
-                    disabled
-                    value="Composer placeholder — nanti disambung ke backend pesan"
-                    className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 outline-none"
-                  />
-                  <button
-                    type="button"
-                    disabled
-                    className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white opacity-60"
-                  >
-                    Kirim
-                  </button>
+          <div className="rounded-3xl border border-slate-200 bg-white/85 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.35)] backdrop-blur-xl flex flex-col overflow-hidden">
+            {selectedContactEmail ? (
+              <>
+                <div className="border-b border-slate-200 bg-gradient-to-r from-violet-50 to-blue-50 px-6 py-4">
+                  <p className="text-sm text-slate-600">Chat dengan</p>
+                  <h3 className="text-lg font-semibold text-slate-950">
+                    {contacts.find((c) => c.email === selectedContactEmail)?.username ||
+                      selectedContactEmail}
+                  </h3>
+                  {sessionReady && (
+                    <p className="mt-1 text-xs text-green-600">
+                      ✓ Chat session ready
+                    </p>
+                  )}
                 </div>
-                <p className="mt-3 text-xs leading-6 text-slate-500">
-                  Layout ini sudah siap untuk alur pesan terenkripsi, tapi backend pengiriman pesan belum dibuat.
+
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                  {isInitializingChat ? (
+                    <div className="flex h-full items-center justify-center">
+                      <p className="text-sm text-slate-400">Menginisialisasi sesi chat...</p>
+                    </div>
+                  ) : messages.length === 0 ? (
+                    <div className="flex h-full items-center justify-center text-center">
+                      <div className="text-slate-400">
+                        <p className="text-sm">Belum ada pesan</p>
+                        <p className="text-xs">Mulai percakapan dengan mengirim pesan</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {messages.map((msg, idx) => (
+                        <div
+                          key={idx}
+                          className={`flex ${msg.sender_email === myEmail ? 'justify-end' : 'justify-start'}`}
+                        >
+                          <div
+                            className={`rounded-2xl max-w-xs px-4 py-3 ${
+                              msg.sender_email === myEmail
+                                ? 'bg-violet-100 text-slate-900'
+                                : msg.decryptionFailed
+                                  ? 'bg-red-100 text-red-700'
+                                  : 'bg-slate-100 text-slate-900'
+                            }`}
+                          >
+                            <p className="text-sm break-words">{msg.plaintext}</p>
+                            <p className="mt-1 text-xs opacity-50">
+                              {new Date(msg.timestamp).toLocaleTimeString('id-ID')}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                      <div ref={messagesEndRef} />
+                    </>
+                  )}
+                </div>
+
+                <form
+                  onSubmit={handleSendMessage}
+                  className="border-t border-slate-200 bg-slate-50 p-4"
+                >
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={messageInput}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                        setMessageInput(e.target.value)
+                      }
+                      placeholder="Ketik pesan..."
+                      disabled={!sessionReady || isSendingMessage}
+                      className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 disabled:bg-slate-100 disabled:text-slate-400"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!sessionReady || !messageInput.trim() || isSendingMessage}
+                      className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700 disabled:bg-slate-300 disabled:cursor-not-allowed"
+                    >
+                      {isSendingMessage ? 'Mengirim...' : 'Kirim'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-center p-6">
+                <p className="text-slate-600">Pilih kontak untuk memulai chat</p>
+                <p className="text-xs text-slate-400">
+                  Chat terenkripsi dengan AES-256-GCM akan dimulai otomatis
                 </p>
               </div>
-            </div>
-          </section>
-        </section>
+            )}
+          </div>
+        </div>
       </main>
 
       <Footer />

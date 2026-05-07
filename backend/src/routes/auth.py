@@ -1,3 +1,5 @@
+from urllib import request
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -25,10 +27,9 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
     password_hash = password_hash_result["hash"]
     password_salt = password_hash_result["salt"]
     
-    # ECDH keypair (X25519)
-    keypair = ecdh.generate_keypair()
-    public_key = keypair["public_key"]
-    private_key = keypair["private_key"]
+    # Pakai public key dari frontend dan private key tidak disimpan di backend
+    public_key = request.public_key
+    private_key = ""
     
     # Generate KDF salt untuk derive key dari password
     kdf_salt_gen = crypto_hash.generate_salt()

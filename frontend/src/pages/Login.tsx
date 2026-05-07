@@ -65,6 +65,7 @@ const Login = () => {
       window.localStorage.setItem('authToken', successData.token)
       window.localStorage.setItem('authEmail', successData.email)
       window.localStorage.setItem('authUsername', successData.username)
+      window.localStorage.setItem('authPassword', form.password)
 
       setStatus({
         kind: 'success',
@@ -98,8 +99,8 @@ const Login = () => {
               Login untuk menerima token JWT dari backend FastAPI.
             </h2>
             <p className="mt-5 max-w-2xl text-base leading-8 text-slate-600 sm:text-lg">
-              Setelah password cocok, backend akan menandatangani token dengan ECDSA,
-              lalu frontend menyimpannya supaya bisa dipakai di request berikutnya.
+              Setelah password sesuai, backend akan menandatangani token dengan ECDSA,
+              lalu frontend menyimpannya supaya dapat dipakai di request berikutnya.
             </p>
 
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
@@ -189,7 +190,7 @@ const Login = () => {
 
             <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Belum punya akun?{' '}
-              <a href="/" className="font-semibold text-indigo-700 underline-offset-4 hover:underline">
+              <a href="/register" className="font-semibold text-indigo-700 underline-offset-4 hover:underline">
                 daftar dulu
               </a>
               .

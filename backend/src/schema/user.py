@@ -4,6 +4,7 @@ class RegisterRequest(BaseModel):
     username: str
     email: EmailStr
     password: str
+    public_key: str
 
 class RegisterResponse(BaseModel):
     username: str
