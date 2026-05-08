@@ -96,8 +96,13 @@ def verify(
         raise ValueError("Algorithm not allowed")
 
     signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
-    signature_raw = ecdsa_utils.b64url_to_raw(signature_b64)
-    if not ecdsa_utils.verify_raw(signing_input, signature_raw, public_key_pem, algorithm):
+    try:
+        signature_raw = ecdsa_utils.b64url_to_raw(signature_b64)
+        is_valid = ecdsa_utils.verify_raw(signing_input, signature_raw, public_key_pem, algorithm)
+    except Exception as exc:
+        raise ValueError("Signature verification failed") from exc
+
+    if not is_valid:
         raise ValueError("Signature verification failed")
 
     now = int(datetime.now(timezone.utc).timestamp())
