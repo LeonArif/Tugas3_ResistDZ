@@ -40,6 +40,10 @@ export async function getContacts(
     token,
   })
 
+  if (response.status === 401) {
+    throw new Error('UNAUTHORIZED')
+  }
+
   if (!response.ok) {
     throw new Error('Gagal mengambil daftar kontak')
   }
@@ -64,7 +68,9 @@ export async function sendMessage(
   token: string,
   receiverEmail: string,
   ciphertext: string,
-  iv: string
+  iv: string,
+  mac: string,
+  macAlg: string
 ): Promise<{ message: string; id: number; timestamp: string }> {
   const response = await apiFetch('/messages', {
     method: 'POST',
@@ -73,6 +79,8 @@ export async function sendMessage(
       receiver_email: receiverEmail,
       ciphertext,
       iv,
+      mac,
+      mac_alg: macAlg,
     }),
   })
 
@@ -93,6 +101,8 @@ export async function getMessages(
     receiver_email: string
     ciphertext: string
     iv: string
+    mac: string
+    mac_alg: string
     timestamp: string
   }[]
 > {

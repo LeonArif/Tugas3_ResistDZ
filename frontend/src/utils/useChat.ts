@@ -3,6 +3,11 @@ import {
   generateECDHKeypair,
   deriveSharedSecret,
   deriveAESKeyFromSharedSecret,
+  deriveMacKeyFromSharedSecret,
+  buildMacPayload,
+  signMac,
+  verifyMac,
+  MAC_ALG,
   encryptMessage,
   decryptMessage,
   savePrivateKeyToStorage,
@@ -16,8 +21,17 @@ interface Message {
   plaintext: string
   ciphertext: string
   iv: string
+  mac: string
+  mac_alg: string
+  macExpected?: string
   timestamp: string
   decryptionFailed?: boolean
+  macInvalid?: boolean
+}
+
+type SendMacOptions = {
+  simulate?: boolean
+  manualMac?: string
 }
 
 interface ContactSession {
@@ -25,6 +39,13 @@ interface ContactSession {
   contactPublicKeyB64: string | null
   sharedSecret: ArrayBuffer | null
   aesKey: CryptoKey | null
+  macKey: CryptoKey | null
+  draft?: {
+    plaintext: string
+    ciphertext: string
+    iv: string
+    mac: string
+  }
   messages: Message[]
 }
 
@@ -43,6 +64,9 @@ export function useChatSession(contactEmail: string, token: string, myEmail: str
     activeContactEmail: contactEmail,
   })
 
+  const normalizeEmail = (email: string) => email.trim().toLowerCase()
+  const normalizeHex = (value: string) => value.trim().toLowerCase()
+
   stateRef.current.token = token
   stateRef.current.myEmail = myEmail
   stateRef.current.activeContactEmail = contactEmail
@@ -54,10 +78,31 @@ export function useChatSession(contactEmail: string, token: string, myEmail: str
         contactPublicKeyB64: null,
         sharedSecret: null,
         aesKey: null,
+        macKey: null,
+        draft: undefined,
         messages: [],
       })
     }
     return stateRef.current.sessions.get(email)!
+  }
+
+  const buildDraft = async (plaintext: string, session: ContactSession, target: string) => {
+    const { ciphertext, iv } = await encryptMessage(plaintext, session.aesKey as CryptoKey)
+    const macPayload = buildMacPayload({
+      senderEmail: normalizeEmail(stateRef.current.myEmail),
+      receiverEmail: normalizeEmail(target),
+      ciphertext: normalizeHex(ciphertext),
+      iv: normalizeHex(iv),
+      macAlg: MAC_ALG,
+    })
+    const mac = await signMac(macPayload, session.macKey as CryptoKey)
+
+    return {
+      plaintext,
+      ciphertext,
+      iv,
+      mac,
+    }
   }
 
   const initializeSession = async (password: string, targetContactEmail?: string) => {
@@ -86,6 +131,10 @@ export function useChatSession(contactEmail: string, token: string, myEmail: str
       const aesKey = await deriveAESKeyFromSharedSecret(sharedSecret)
       session.aesKey = aesKey
 
+      // Derive MAC key terpisah agar integrity + auth tidak tercampur dengan AES key
+      const macKey = await deriveMacKeyFromSharedSecret(sharedSecret)
+      session.macKey = macKey
+
       return true
     } catch (error) {
       console.error('Gagal initialize session:', error)
@@ -93,7 +142,10 @@ export function useChatSession(contactEmail: string, token: string, myEmail: str
     }
   }
 
-  const sendEncryptedMessage = async (plaintext: string): Promise<Message> => {
+  const sendEncryptedMessage = async (
+    plaintext: string,
+    options?: SendMacOptions
+  ): Promise<Message> => {
     const target = stateRef.current.activeContactEmail
     if (!target) throw new Error('Tidak ada kontak yang dipilih')
 
@@ -102,18 +154,48 @@ export function useChatSession(contactEmail: string, token: string, myEmail: str
       throw new Error('Chat session belum diinisialisasi')
     }
 
-    const { ciphertext, iv } = await encryptMessage(plaintext, session.aesKey)
-    const response = await sendMessage(stateRef.current.token, target, ciphertext, iv)
+    if (!session.macKey) {
+      throw new Error('MAC key belum tersedia')
+    }
+
+    const draft =
+      session.draft && session.draft.plaintext === plaintext
+        ? session.draft
+        : await buildDraft(plaintext, session, target)
+    const tamperHex = (hex: string) => {
+      if (!hex) return hex
+      const replacement = hex[0] === '0' ? '1' : '0'
+      return `${replacement}${hex.slice(1)}`
+    }
+    const manualMac = options?.manualMac?.trim()
+    const macToSend = options?.simulate
+      ? manualMac
+        ? normalizeHex(manualMac)
+        : tamperHex(draft.mac)
+      : draft.mac
+    const response = await sendMessage(
+      stateRef.current.token,
+      target,
+      draft.ciphertext,
+      draft.iv,
+      macToSend,
+      MAC_ALG
+    )
 
     const message: Message = {
       sender_email: stateRef.current.myEmail,
       receiver_email: target,
       plaintext,
-      ciphertext,
-      iv,
+      ciphertext: draft.ciphertext,
+      iv: draft.iv,
+      mac: macToSend,
+      mac_alg: MAC_ALG,
+      macExpected: draft.mac,
       timestamp: response.timestamp,
+      macInvalid: false,
     }
 
+    session.draft = undefined
     session.messages.push(message)
     return message
   }
@@ -127,11 +209,45 @@ export function useChatSession(contactEmail: string, token: string, myEmail: str
       throw new Error('Chat session belum diinisialisasi')
     }
 
+    if (!session.macKey) {
+      throw new Error('MAC key belum tersedia')
+    }
+
     try {
       const encryptedMessages = await getMessages(stateRef.current.token, target)
 
       const decryptedMessages: Message[] = []
+
+      // Flow: verify MAC -> decrypt only if MAC valid
       for (const msg of encryptedMessages) {
+        const macPayload = buildMacPayload({
+          senderEmail: normalizeEmail(msg.sender_email),
+          receiverEmail: normalizeEmail(msg.receiver_email),
+          ciphertext: normalizeHex(msg.ciphertext),
+          iv: normalizeHex(msg.iv),
+          macAlg: msg.mac_alg,
+        })
+        const expectedMac = await signMac(macPayload, session.macKey)
+        const macIsValid =
+          msg.mac_alg === MAC_ALG &&
+          (await verifyMac(macPayload, normalizeHex(msg.mac), session.macKey))
+
+        if (!macIsValid) {
+          decryptedMessages.push({
+            sender_email: msg.sender_email,
+            receiver_email: msg.receiver_email,
+            plaintext: '[MAC tidak valid]',
+            ciphertext: msg.ciphertext,
+            iv: msg.iv,
+            mac: msg.mac,
+            mac_alg: msg.mac_alg,
+            macExpected: expectedMac,
+            timestamp: msg.timestamp,
+            macInvalid: true,
+          })
+          continue
+        }
+
         try {
           const plaintext = await decryptMessage(msg.ciphertext, msg.iv, session.aesKey)
           decryptedMessages.push({
@@ -140,7 +256,11 @@ export function useChatSession(contactEmail: string, token: string, myEmail: str
             plaintext,
             ciphertext: msg.ciphertext,
             iv: msg.iv,
+            mac: msg.mac,
+            mac_alg: msg.mac_alg,
+            macExpected: expectedMac,
             timestamp: msg.timestamp,
+            macInvalid: false,
           })
         } catch (error) {
           console.error('Gagal decrypt message:', error)
@@ -150,8 +270,12 @@ export function useChatSession(contactEmail: string, token: string, myEmail: str
             plaintext: '[Gagal mendekripsi pesan]',
             ciphertext: msg.ciphertext,
             iv: msg.iv,
+            mac: msg.mac,
+            mac_alg: msg.mac_alg,
+            macExpected: expectedMac,
             timestamp: msg.timestamp,
             decryptionFailed: true,
+            macInvalid: false,
           })
         }
       }
@@ -169,11 +293,48 @@ export function useChatSession(contactEmail: string, token: string, myEmail: str
     return target ? (stateRef.current.sessions.get(target)?.messages ?? []) : []
   }
 
+  const previewMacForDraft = async (plaintext: string) => {
+    const target = stateRef.current.activeContactEmail
+    if (!target) throw new Error('Tidak ada kontak yang dipilih')
+
+    const session = stateRef.current.sessions.get(target)
+    if (!session?.aesKey) {
+      throw new Error('Chat session belum diinisialisasi')
+    }
+
+    if (!session.macKey) {
+      throw new Error('MAC key belum tersedia')
+    }
+
+    const draft = await buildDraft(plaintext, session, target)
+    session.draft = draft
+    return draft.mac
+  }
+
   return {
     initializeSession,
     sendEncryptedMessage,
     loadMessageHistory,
     getMessages: getLocalMessages,
+    previewMacForDraft,
+    verifyMacForMessage: async (msg: Message, overrideMac?: string) => {
+      const target = stateRef.current.activeContactEmail
+      if (!target) throw new Error('Tidak ada kontak yang dipilih')
+
+      const session = stateRef.current.sessions.get(target)
+      if (!session?.macKey) throw new Error('MAC key belum tersedia')
+
+      const effectiveMac = overrideMac ? normalizeHex(overrideMac) : normalizeHex(msg.mac)
+      const macPayload = buildMacPayload({
+        senderEmail: normalizeEmail(msg.sender_email),
+        receiverEmail: normalizeEmail(msg.receiver_email),
+        ciphertext: normalizeHex(msg.ciphertext),
+        iv: normalizeHex(msg.iv),
+        macAlg: msg.mac_alg,
+      })
+
+      return msg.mac_alg === MAC_ALG && (await verifyMac(macPayload, effectiveMac, session.macKey))
+    },
   }
 }
 

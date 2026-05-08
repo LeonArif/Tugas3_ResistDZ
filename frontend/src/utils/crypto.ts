@@ -1,5 +1,9 @@
 // Utility functions untuk cryptography menggunakan Web Crypto API
 
+export const MAC_ALG = 'HMAC-SHA256'
+const MAC_INFO = 'chat-mac-key'
+const MAC_VERSION = 'v1'
+
 // Generate ECDH keypair menggunakan X25519
 export async function generateECDHKeypair(): Promise<{
   privateKey: CryptoKey
@@ -43,6 +47,7 @@ export async function deriveSharedSecret(
       public: publicKey,
     },
     privateKey,
+    256
   )
 
   return sharedSecret
@@ -76,6 +81,79 @@ export async function deriveAESKeyFromSharedSecret(
   ])
 
   return aesKey
+}
+
+// Derive MAC key terpisah agar tidak reuse AES key untuk autentikasi
+export async function deriveMacKeyFromSharedSecret(
+  sharedSecret: ArrayBuffer,
+  salt: string = ''
+): Promise<CryptoKey> {
+  const saltBuffer = salt ? base64ToArrayBuffer(salt) : new Uint8Array(16)
+  const key = await window.crypto.subtle.importKey('raw', sharedSecret, 'HKDF', false, [
+    'deriveBits',
+  ])
+
+  const derivedKeyBits = await window.crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: saltBuffer,
+      info: new TextEncoder().encode(MAC_INFO),
+    },
+    key,
+    256
+  )
+
+  return window.crypto.subtle.importKey(
+    'raw',
+    derivedKeyBits,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify']
+  )
+}
+
+export function buildMacPayload(params: {
+  senderEmail: string
+  receiverEmail: string
+  ciphertext: string
+  iv: string
+  macAlg?: string
+}): string {
+  const macAlg = (params.macAlg ?? MAC_ALG).toUpperCase()
+  const senderEmail = params.senderEmail.trim().toLowerCase()
+  const receiverEmail = params.receiverEmail.trim().toLowerCase()
+  const ciphertext = params.ciphertext.trim().toLowerCase()
+  const iv = params.iv.trim().toLowerCase()
+
+  return [
+    MAC_VERSION,
+    macAlg,
+    senderEmail,
+    receiverEmail,
+    ciphertext,
+    iv,
+  ].join('|')
+}
+
+export async function signMac(payload: string, macKey: CryptoKey): Promise<string> {
+  const data = new TextEncoder().encode(payload)
+  const signature = await window.crypto.subtle.sign('HMAC', macKey, data)
+  return arrayBufferToHex(signature)
+}
+
+export async function verifyMac(
+  payload: string,
+  macHex: string,
+  macKey: CryptoKey
+): Promise<boolean> {
+  try {
+    const data = new TextEncoder().encode(payload)
+    const signature = hexToArrayBuffer(macHex)
+    return window.crypto.subtle.verify('HMAC', macKey, signature, data)
+  } catch {
+    return false
+  }
 }
 
 // Encrypt message menggunakan AES-256-GCM
@@ -245,11 +323,27 @@ function arrayBufferToHex(buffer: ArrayBuffer): string {
 }
 
 function hexToArrayBuffer(hex: string): ArrayBuffer {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substr(i, 2), 16)
+  const normalized = normalizeHexString(hex)
+  if (normalized.length % 2 !== 0) {
+    throw new Error('Invalid hex length')
+  }
+  const bytes = new Uint8Array(normalized.length / 2)
+  for (let i = 0; i < normalized.length; i += 2) {
+    const byte = Number.parseInt(normalized.slice(i, i + 2), 16)
+    if (Number.isNaN(byte)) {
+      throw new Error('Invalid hex content')
+    }
+    bytes[i / 2] = byte
   }
   return bytes.buffer
+}
+
+function normalizeHexString(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^0x/, '')
+    .replace(/\s+/g, '')
 }
 
 export function base64ToHex(base64: string): string {

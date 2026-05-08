@@ -10,8 +10,12 @@ type ChatMessage = {
   plaintext: string
   ciphertext: string
   iv: string
+  mac: string
+  mac_alg: string
+  macExpected?: string
   timestamp: string
   decryptionFailed?: boolean
+  macInvalid?: boolean
 }
 
 const POLLING_INTERVAL_MS = 3000
@@ -26,7 +30,9 @@ const Chat = () => {
   // Menggunakan '' bukan null agar hook bisa dipanggil unconditionally
   const [selectedContactEmail, setSelectedContactEmail] = useState<string>('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [messageInput, setMessageInput] = useState('')
+  const [messageInput, setMessageInput] = useState(() => {
+    return window.localStorage.getItem('draftMessage') ?? ''
+  })
   const [status, setStatus] = useState<{
     kind: 'idle' | 'loading' | 'success' | 'error'
     message: string
@@ -34,21 +40,62 @@ const Chat = () => {
   const [isInitializingChat, setIsInitializingChat] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [sessionReady, setSessionReady] = useState(false)
+  const [macSimEnabled, setMacSimEnabled] = useState(() => {
+    return window.localStorage.getItem('macSimEnabled') === 'true'
+  })
+  const [macSimMode, setMacSimMode] = useState<'auto' | 'manual'>(() => {
+    const stored = window.localStorage.getItem('macSimMode')
+    return stored === 'manual' ? 'manual' : 'auto'
+  })
+  const [macManualValue, setMacManualValue] = useState(() => {
+    return window.localStorage.getItem('macManualValue') ?? ''
+  })
+  const [macPreview, setMacPreview] = useState('')
+  const [macPreviewStatus, setMacPreviewStatus] = useState<'idle' | 'loading' | 'error'>('idle')
 
   const chatSession = useChatSession(selectedContactEmail, token, myEmail)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const container = messagesContainerRef.current
+    if (!container) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      return
+    }
+
+    requestAnimationFrame(() => {
+      try {
+        container.scrollTop = container.scrollHeight
+      } catch (_) {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      }
+    })
   }
 
   useEffect(() => {
     scrollToBottom()
   }, [messages])
 
-  // Load daftar kontak
+  useEffect(() => {
+    window.localStorage.setItem('draftMessage', messageInput)
+  }, [messageInput])
+
+  useEffect(() => {
+    window.localStorage.setItem('macSimEnabled', String(macSimEnabled))
+  }, [macSimEnabled])
+
+  useEffect(() => {
+    window.localStorage.setItem('macSimMode', macSimMode)
+  }, [macSimMode])
+
+  useEffect(() => {
+    window.localStorage.setItem('macManualValue', macManualValue)
+  }, [macManualValue])
+
   useEffect(() => {
     if (!token) {
       window.location.href = '/login'
@@ -62,6 +109,14 @@ const Chat = () => {
         setContacts(data)
         setStatus({ kind: 'idle', message: '' })
       } catch (error) {
+        if (error instanceof Error && error.message === 'UNAUTHORIZED') {
+          window.localStorage.removeItem('authToken')
+          window.localStorage.removeItem('authEmail')
+          window.localStorage.removeItem('authUsername')
+          window.localStorage.removeItem('authPassword')
+          window.location.href = '/login'
+          return
+        }
         setStatus({
           kind: 'error',
           message: error instanceof Error ? error.message : 'Gagal memuat kontak',
@@ -137,16 +192,74 @@ const Chat = () => {
     }
   }
 
+  useEffect(() => {
+    if (!selectedContactEmail || !sessionReady) return
+
+    stopPolling()
+    startPolling(selectedContactEmail)
+
+    const refreshMessages = async () => {
+      try {
+        const latestMessages = await chatSession.loadMessageHistory(selectedContactEmail)
+        setMessages(latestMessages)
+      } catch {
+      }
+    }
+
+    refreshMessages()
+  }, [
+    selectedContactEmail,
+    sessionReady,
+    startPolling,
+    stopPolling,
+    chatSession,
+  ])
+
+  useEffect(() => {
+    if (!sessionReady || !messageInput.trim()) {
+      setMacPreviewStatus('idle')
+      return
+    }
+
+    if (previewTimerRef.current) {
+      clearTimeout(previewTimerRef.current)
+    }
+
+    setMacPreviewStatus('loading')
+    previewTimerRef.current = setTimeout(async () => {
+      try {
+        const preview = await chatSession.previewMacForDraft(messageInput.trim())
+        setMacPreview(preview)
+        setMacPreviewStatus('idle')
+      } catch {
+        setMacPreviewStatus('error')
+      }
+    }, 50)
+
+    return () => {
+      if (previewTimerRef.current) {
+        clearTimeout(previewTimerRef.current)
+      }
+    }
+  }, [messageInput, sessionReady, chatSession])
+
   const handleSendMessage = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
     if (!messageInput.trim() || !sessionReady) return
+    if (macSimEnabled && macSimMode === 'manual' && !macManualValue.trim()) {
+      setStatus({ kind: 'error', message: 'Nilai MAC manual belum diisi' })
+      return
+    }
 
     try {
       setIsSendingMessage(true)
       setStatus({ kind: 'loading', message: 'Mengirim pesan...' })
 
-      const newMessage = await chatSession.sendEncryptedMessage(messageInput.trim())
+      const newMessage = await chatSession.sendEncryptedMessage(messageInput.trim(), {
+        simulate: macSimEnabled,
+        manualMac: macSimEnabled && macSimMode === 'manual' ? macManualValue : undefined,
+      })
       setMessages((prev) => [...prev, newMessage])
       setMessageInput('')
 
@@ -170,6 +283,12 @@ const Chat = () => {
     window.localStorage.removeItem('authPassword')
     window.location.href = '/login'
   }
+
+  const lastMacStatus = messages.length
+    ? messages[messages.length - 1].macInvalid
+      ? 'FAILED'
+      : 'OK'
+    : '-'
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.95),rgba(243,244,246,0.88)_35%,rgba(233,236,255,0.95)_100%)] text-slate-900">
@@ -243,9 +362,14 @@ const Chat = () => {
                       ✓ Chat session ready
                     </p>
                   )}
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                    <span className="rounded-full border border-slate-200 bg-white/80 px-2 py-0.5">
+                      MAC: {lastMacStatus}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-6 space-y-4">
                   {isInitializingChat ? (
                     <div className="flex h-full items-center justify-center">
                       <p className="text-sm text-slate-400">Menginisialisasi sesi chat...</p>
@@ -268,12 +392,41 @@ const Chat = () => {
                             className={`rounded-2xl max-w-xs px-4 py-3 ${
                               msg.sender_email === myEmail
                                 ? 'bg-violet-100 text-slate-900'
-                                : msg.decryptionFailed
+                                : msg.macInvalid
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : msg.decryptionFailed
                                   ? 'bg-red-100 text-red-700'
                                   : 'bg-slate-100 text-slate-900'
                             }`}
                           >
                             <p className="text-sm break-words">{msg.plaintext}</p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                  msg.macInvalid
+                                    ? 'bg-rose-200 text-rose-800'
+                                    : 'bg-emerald-200 text-emerald-800'
+                                }`}
+                              >
+                                {msg.macInvalid ? 'MAC gagal' : 'MAC ok'}
+                              </span>
+                              <span className="rounded-full bg-white/80 px-2 py-0.5">
+                                {msg.mac_alg}
+                              </span>
+                            </div>
+                            <p className="mt-1 break-all text-[11px] text-slate-500">
+                              {msg.sender_email === myEmail ? 'MAC dibuat' : 'MAC diterima'}: {msg.mac}
+                            </p>
+                            {msg.macExpected && (
+                              <p className="mt-1 break-all text-[11px] text-slate-500">
+                                MAC dihitung: {msg.macExpected}
+                              </p>
+                            )}
+                            {msg.macInvalid && (
+                              <p className="mt-1 text-[11px] font-medium text-rose-700">
+                                MAC Verification Failed. Message Integrity Compromised. Message Rejected.
+                              </p>
+                            )}
                             <p className="mt-1 text-xs opacity-50">
                               {new Date(msg.timestamp).toLocaleTimeString('id-ID')}
                             </p>
@@ -289,6 +442,54 @@ const Chat = () => {
                   onSubmit={handleSendMessage}
                   className="border-t border-slate-200 bg-slate-50 p-4"
                 >
+                  <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={macSimEnabled}
+                        onChange={(event) => setMacSimEnabled(event.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300"
+                      />
+                      Simulasi MAC (pengirim)
+                    </label>
+                    <select
+                      value={macSimMode}
+                      onChange={(event) => setMacSimMode(event.target.value as 'auto' | 'manual')}
+                      disabled={!macSimEnabled}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 disabled:bg-slate-100"
+                    >
+                      <option value="auto">Ubah 1 karakter otomatis</option>
+                      <option value="manual">Ubah MAC manual</option>
+                    </select>
+                    {macSimEnabled && macSimMode === 'manual' && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          value={macManualValue}
+                          onChange={(event) => setMacManualValue(event.target.value)}
+                          className="min-w-[200px] rounded-lg border border-slate-200 px-2 py-1 text-xs"
+                          placeholder="MAC hex manual (misal: 5fe...)"
+                        />
+                        {macPreview && (
+                          <button
+                            type="button"
+                            onClick={() => setMacManualValue(macPreview)}
+                            className="rounded-md border border-slate-200 px-2 py-1 text-[11px]"
+                          >
+                            Gunakan MAC preview
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <span className="text-[11px] text-slate-500">
+                      {macPreviewStatus === 'error'
+                        ? 'Gagal menghitung MAC preview.'
+                        : macPreview
+                          ? `MAC preview: ${macPreview}`
+                          : messageInput.trim()
+                            ? 'Menghitung MAC preview...'
+                            : 'Ketik pesan untuk melihat MAC preview.'}
+                    </span>
+                  </div>
                   <div className="flex gap-2">
                     <input
                       type="text"
