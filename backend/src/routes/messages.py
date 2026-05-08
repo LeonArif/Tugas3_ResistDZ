@@ -7,6 +7,7 @@ from ..schema.message import MessageRequest, MessageResponse
 from .dependencies import verify_token
 
 router = APIRouter()
+MAC_ALG = "HMAC-SHA256"
 
 @router.post("/messages", response_model=dict)
 def send_message(request: MessageRequest, token_payload: dict = Depends(verify_token), db: Session = Depends(get_db)):
@@ -18,6 +19,12 @@ def send_message(request: MessageRequest, token_payload: dict = Depends(verify_t
     
     if sender_email == receiver_email:
         raise HTTPException(status_code=400, detail="Cannot send message to yourself")
+
+    if not request.mac or not request.mac_alg:
+        raise HTTPException(status_code=400, detail="MAC is required")
+
+    if request.mac_alg != MAC_ALG:
+        raise HTTPException(status_code=400, detail="Unsupported MAC algorithm")
     
     # Verifikasi keberadaan penerima
     receiver = db.query(User).filter(User.email == receiver_email).first()
@@ -30,6 +37,8 @@ def send_message(request: MessageRequest, token_payload: dict = Depends(verify_t
         receiver_email=receiver_email,
         ciphertext=request.ciphertext,
         iv=request.iv,
+        mac=request.mac,
+        mac_alg=request.mac_alg,
     )
     
     db.add(new_message)
@@ -68,6 +77,8 @@ def get_messages(user_email: str, token_payload: dict = Depends(verify_token), d
             receiver_email=msg.receiver_email,
             ciphertext=msg.ciphertext,
             iv=msg.iv,
+            mac=msg.mac,
+            mac_alg=msg.mac_alg,
             timestamp=msg.timestamp,
         )
         for msg in messages

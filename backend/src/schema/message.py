@@ -5,12 +5,16 @@ class MessageRequest(BaseModel):
     receiver_email: str
     ciphertext: str
     iv: str
+    mac: str
+    mac_alg: str
 
 class MessageResponse(BaseModel):
     sender_email: str
     receiver_email: str
     ciphertext: str
     iv: str
+    mac: str
+    mac_alg: str
     timestamp: datetime
 
     class Config:
