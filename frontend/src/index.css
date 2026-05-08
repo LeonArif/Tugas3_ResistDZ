@@ -1,8 +1,9 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Inter', 'Segoe UI', Roboto, sans-serif;
-  --font-display: 'Space Grotesk', 'Inter', 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Manrope', 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Space Grotesk', 'Manrope', 'Segoe UI', Roboto, sans-serif;
 }
 
 @layer base {
@@ -20,7 +21,7 @@
     min-width: 320px;
     background:
       radial-gradient(circle at top, rgba(255, 255, 255, 0.95), transparent 40%),
-      linear-gradient(180deg, #f8fafc 0%, #eef2ff 52%, #e0e7ff 100%);
+      linear-gradient(180deg, #f8fafc 0%, #edf2f7 52%, #e2e8f0 100%);
     color: #0f172a;
   }
 
@@ -39,7 +40,7 @@
   }
 
   ::selection {
-    background: rgba(79, 70, 229, 0.18);
+    background: rgba(13, 148, 136, 0.2);
     color: #111827;
   }
 }

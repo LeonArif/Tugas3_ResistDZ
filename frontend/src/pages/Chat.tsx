@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type ChangeEvent, type FormEvent } from 'react'
+import { useState, useEffect, useRef, useCallback, useLayoutEffect, type ChangeEvent, type FormEvent } from 'react'
 import Footer from '../components/Footer'
 import Navbar from '../components/Navbar'
 import { useChatSession } from '../utils/useChat'
@@ -60,25 +60,25 @@ const Chat = () => {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const scrollToBottom = () => {
-    const container = messagesContainerRef.current
-    if (!container) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-      return
-    }
+ const scrollToBottom = (force = false) => {
+  const container = messagesContainerRef.current
+  if (!container) return
 
+  const distanceFromBottom =
+    container.scrollHeight - container.scrollTop - container.clientHeight
+
+  const isNearBottom = distanceFromBottom < 120
+
+  if (force || isNearBottom) {
     requestAnimationFrame(() => {
-      try {
-        container.scrollTop = container.scrollHeight
-      } catch (_) {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-      }
+      container.scrollTop = container.scrollHeight
     })
   }
+}
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages])
+  }, [messages.length])
 
   useEffect(() => {
     window.localStorage.setItem('draftMessage', messageInput)
@@ -291,41 +291,20 @@ const Chat = () => {
     : '-'
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.95),rgba(243,244,246,0.88)_35%,rgba(233,236,255,0.95)_100%)] text-slate-900">
+    <div className="h-screen overflow-hidden flex flex-col bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.95),rgba(243,244,246,0.88)_35%,rgba(233,236,255,0.95)_100%)] text-slate-900">
       <Navbar />
-
-      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-        {status.kind !== 'idle' && (
-          <div
-            className={`rounded-2xl border px-4 py-3 ${
-              status.kind === 'error'
-                ? 'border-red-200 bg-red-50 text-red-700'
-                : status.kind === 'success'
-                  ? 'border-green-200 bg-green-50 text-green-700'
-                  : 'border-blue-200 bg-blue-50 text-blue-700'
-            }`}
-          >
-            {status.message}
-          </div>
-        )}
-
-        <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
-          <aside className="rounded-3xl border border-slate-200 bg-white/85 p-6 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.35)] backdrop-blur-xl">
+      <main className="mx-auto w-full max-w-7xl h-[calc(100vh-5rem-4rem)] px-4 py-6 sm:px-6 lg:px-8 lg:py-8 overflow-hidden">
+        <div className="grid h-full min-h-0 gap-6 lg:grid-cols-[320px_1fr]">
+          <aside className="rounded-3xl border border-slate-200 bg-white/85 p-6 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.35)] backdrop-blur-xl h-full min-h-0 flex flex-col overflow-hidden">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-950">Kontak</h3>
-              <button
-                onClick={handleLogout}
-                className="rounded-lg bg-red-100 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-200"
-              >
-                Logout
-              </button>
+              <h3 className="text-lg font-semibold text-slate-950">⁀જ➣ ጸ Daftar Kontak</h3>
             </div>
 
             <p className="mb-4 text-sm text-slate-500">
-              Halo, <strong>{myUsername}</strong> ({myEmail})
+              Halo, <strong>{myUsername}</strong> !!!
             </p>
 
-            <div className="space-y-2">
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
               {contacts.length === 0 ? (
                 <p className="text-sm text-slate-400">Belum ada kontak lain</p>
               ) : (
@@ -348,7 +327,7 @@ const Chat = () => {
             </div>
           </aside>
 
-          <div className="rounded-3xl border border-slate-200 bg-white/85 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.35)] backdrop-blur-xl flex flex-col overflow-hidden">
+          <div className="rounded-3xl border border-slate-200 bg-white/85 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.35)] backdrop-blur-xl flex flex-col overflow-hidden h-full min-h-0">
             {selectedContactEmail ? (
               <>
                 <div className="border-b border-slate-200 bg-gradient-to-r from-violet-50 to-blue-50 px-6 py-4">
@@ -369,7 +348,7 @@ const Chat = () => {
                   </div>
                 </div>
 
-                <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6 space-y-4">
                   {isInitializingChat ? (
                     <div className="flex h-full items-center justify-center">
                       <p className="text-sm text-slate-400">Menginisialisasi sesi chat...</p>
@@ -400,32 +379,36 @@ const Chat = () => {
                             }`}
                           >
                             <p className="text-sm break-words">{msg.plaintext}</p>
-                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
-                              <span
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                                  msg.macInvalid
-                                    ? 'bg-rose-200 text-rose-800'
-                                    : 'bg-emerald-200 text-emerald-800'
-                                }`}
-                              >
-                                {msg.macInvalid ? 'MAC gagal' : 'MAC ok'}
-                              </span>
-                              <span className="rounded-full bg-white/80 px-2 py-0.5">
-                                {msg.mac_alg}
-                              </span>
-                            </div>
-                            <p className="mt-1 break-all text-[11px] text-slate-500">
-                              {msg.sender_email === myEmail ? 'MAC dibuat' : 'MAC diterima'}: {msg.mac}
-                            </p>
-                            {msg.macExpected && (
-                              <p className="mt-1 break-all text-[11px] text-slate-500">
-                                MAC dihitung: {msg.macExpected}
-                              </p>
-                            )}
-                            {msg.macInvalid && (
-                              <p className="mt-1 text-[11px] font-medium text-rose-700">
-                                MAC Verification Failed. Message Integrity Compromised. Message Rejected.
-                              </p>
+                            {macSimEnabled && (
+                              <>
+                                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                                  <span
+                                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                      msg.macInvalid
+                                        ? 'bg-rose-200 text-rose-800'
+                                        : 'bg-emerald-200 text-emerald-800'
+                                    }`}
+                                  >
+                                    {msg.macInvalid ? 'MAC gagal' : 'MAC ok'}
+                                  </span>
+                                  <span className="rounded-full bg-white/80 px-2 py-0.5">
+                                    {msg.mac_alg}
+                                  </span>
+                                </div>
+                                <p className="mt-1 break-all text-[11px] text-slate-500">
+                                  {msg.sender_email === myEmail ? 'MAC dibuat' : 'MAC diterima'}: {msg.mac}
+                                </p>
+                                {msg.macExpected && (
+                                  <p className="mt-1 break-all text-[11px] text-slate-500">
+                                    MAC dihitung: {msg.macExpected}
+                                  </p>
+                                )}
+                                {msg.macInvalid && (
+                                  <p className="mt-1 text-[11px] font-medium text-rose-700">
+                                    MAC Verification Failed. Message Integrity Compromised. Message Rejected.
+                                  </p>
+                                )}
+                              </>
                             )}
                             <p className="mt-1 text-xs opacity-50">
                               {new Date(msg.timestamp).toLocaleTimeString('id-ID')}
@@ -450,7 +433,7 @@ const Chat = () => {
                         onChange={(event) => setMacSimEnabled(event.target.checked)}
                         className="h-3.5 w-3.5 rounded border-slate-300"
                       />
-                      Simulasi MAC (pengirim)
+                      Modifikasi MAC
                     </label>
                     <select
                       value={macSimMode}
@@ -523,7 +506,9 @@ const Chat = () => {
         </div>
       </main>
 
-      <Footer />
+      <div className="shrink-0">
+        <Footer />
+      </div>
     </div>
   )
 }
