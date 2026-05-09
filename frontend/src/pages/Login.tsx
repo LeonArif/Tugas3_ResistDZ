@@ -67,6 +67,7 @@ const Login = () => {
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors)
       setStatus({ kind: 'error', message: 'Periksa kembali input yang masih salah.' })
+      setShowToast(true)
       return
     }
 
@@ -114,6 +115,7 @@ const Login = () => {
         kind: 'error',
         message: error instanceof Error ? error.message : 'Terjadi kesalahan saat login.',
       })
+      setShowToast(true)
     } finally {
       setIsSubmitting(false)
     }
@@ -168,7 +170,12 @@ const Login = () => {
       />
     </AuthLayout>
       {showToast && (
-        <SuccessToast message={status.message} duration={1000} onClose={() => setShowToast(false)} />
+        <SuccessToast
+          message={status.message}
+          duration={1000}
+          variant={status.kind === 'error' ? 'error' : 'success'}
+          onClose={() => setShowToast(false)}
+        />
       )}
     </>
   )
