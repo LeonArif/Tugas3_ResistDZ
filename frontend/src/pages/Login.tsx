@@ -86,12 +86,34 @@ const Login = () => {
         }),
       })
 
-      const data: LoginResponse | { detail?: string } = await response.json()
+      const responseText = await response.text()
+      const data: LoginResponse | { detail?: string } | null = responseText
+        ? (() => {
+            try {
+              return JSON.parse(responseText) as LoginResponse | { detail?: string }
+            } catch {
+              return null
+            }
+          })()
+        : null
 
       if (!response.ok) {
         const errorMessage =
-          'detail' in data && typeof data.detail === 'string' ? data.detail : 'Login gagal.'
+          data && 'detail' in data && typeof data.detail === 'string'
+            ? data.detail
+            : responseText.trim() || 'Login gagal.'
         throw new Error(errorMessage)
+      }
+
+      if (
+        !data ||
+        typeof data !== 'object' ||
+        !('token' in data) ||
+        !('username' in data) ||
+        !('email' in data) ||
+        !('message' in data)
+      ) {
+        throw new Error('Response login tidak valid.')
       }
 
       const successData = data as LoginResponse
