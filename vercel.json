@@ -1,9 +1,6 @@
 {
   "buildCommand": "cd frontend && npm run build",
   "outputDirectory": "frontend/dist",
-  "env": {
-    "VITE_API_PROXY_TARGET": "@vite-api-url"
-  },
   "rewrites": [
     {
       "source": "/(.*)",
