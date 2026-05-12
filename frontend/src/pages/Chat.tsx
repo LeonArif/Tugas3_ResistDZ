@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useLayoutEffect, type ChangeEvent, type FormEvent } from 'react'
+import { useState, useEffect, useRef, useCallback, type ChangeEvent, type FormEvent } from 'react'
 import Footer from '../components/Footer'
 import Navbar from '../components/Navbar'
 import { useChatSession } from '../utils/useChat'
@@ -275,15 +275,6 @@ const Chat = () => {
     }
   }
 
-  const handleLogout = () => {
-    stopPolling()
-    window.localStorage.removeItem('authToken')
-    window.localStorage.removeItem('authEmail')
-    window.localStorage.removeItem('authUsername')
-    window.localStorage.removeItem('authPassword')
-    window.location.href = '/login'
-  }
-
   const lastMacStatus = messages.length
     ? messages[messages.length - 1].macInvalid
       ? 'FAILED'
@@ -328,6 +319,19 @@ const Chat = () => {
           </aside>
 
           <div className="rounded-3xl border border-slate-200 bg-white/85 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.35)] backdrop-blur-xl flex flex-col overflow-hidden h-full min-h-0">
+            {status.kind !== 'idle' && status.message && (
+              <div
+                className={`mx-4 mt-4 rounded-2xl border px-4 py-3 text-sm ${
+                  status.kind === 'error'
+                    ? 'border-rose-200 bg-rose-50 text-rose-700'
+                    : status.kind === 'success'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-slate-200 bg-slate-50 text-slate-600'
+                }`}
+              >
+                {status.message}
+              </div>
+            )}
             {selectedContactEmail ? (
               <>
                 <div className="border-b border-slate-200 bg-gradient-to-r from-violet-50 to-blue-50 px-6 py-4">

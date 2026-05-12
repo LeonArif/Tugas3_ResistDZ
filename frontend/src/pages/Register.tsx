@@ -108,14 +108,33 @@ const Register = () => {
         }),
       })
 
-      const data: RegisterResponse | { detail?: string } = await response.json()
+      const responseText = await response.text()
+      const data: RegisterResponse | { detail?: string } | null = responseText
+        ? (() => {
+            try {
+              return JSON.parse(responseText) as RegisterResponse | { detail?: string }
+            } catch {
+              return null
+            }
+          })()
+        : null
 
       if (!response.ok) {
         const errorMessage =
-          'detail' in data && typeof data.detail === 'string'
+          data && 'detail' in data && typeof data.detail === 'string'
             ? data.detail
-            : 'Registrasi gagal.'
+            : responseText.trim() || 'Registrasi gagal.'
         throw new Error(errorMessage)
+      }
+
+      if (
+        !data ||
+        typeof data !== 'object' ||
+        !('username' in data) ||
+        !('email' in data) ||
+        !('message' in data)
+      ) {
+        throw new Error('Response registrasi tidak valid.')
       }
 
       const successData = data as RegisterResponse
