@@ -3,7 +3,7 @@
 Aplikasi chat berbasis web yang menggabungkan autentikasi, pembentukan kunci komunikasi, dan enkripsi pesan dalam satu alur.
 
 ## ── .✦ Deskripsi program
-ResistDZ adalah aplikasi chat web dengan fokus keamanan komunikasi. Mekanisme utama yang digunakan:
+ChaDZapp adalah aplikasi chat web dengan fokus keamanan komunikasi. Mekanisme utama yang digunakan:
 - Autentikasi pengguna menggunakan JWT.
 - Pembentukan shared secret menggunakan ECDH dan HKDF.
 - Enkripsi dan dekripsi pesan menggunakan AES-256.
